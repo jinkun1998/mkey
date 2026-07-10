@@ -167,6 +167,15 @@ final class MkeyAppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // Keep the Dock icon in sync with the "show in Dock" setting. Our
+        // windows briefly promote the app to .regular so they can grab focus
+        // on macOS 26 (an accessory app's window renders gray otherwise); once
+        // a window is key we drop back to .accessory so no Dock icon lingers.
+        NotificationCenter.default.addObserver(self, selector: #selector(mkWindowBecameKey(_:)),
+                                               name: NSWindow.didBecomeKeyNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(mkWindowWillClose(_:)),
+                                               name: NSWindow.willCloseNotification, object: nil)
+
         if AXIsProcessTrusted() {
             startEngine()
         } else {
@@ -185,6 +194,30 @@ final class MkeyAppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag { openSettingsWindow() }
         return true
+    }
+
+    // MARK: Dock icon / activation policy
+
+    private func isMkUIWindow(_ window: NSWindow?) -> Bool {
+        guard let id = window?.identifier?.rawValue else { return false }
+        return id.hasPrefix("settings") || id.hasPrefix("welcome")
+    }
+
+    @objc private func mkWindowBecameKey(_ note: Notification) {
+        guard isMkUIWindow(note.object as? NSWindow) else { return }
+        // Focus is secured; honour the user's choice to hide the Dock icon.
+        if !AppState.shared.showIconOnDock {
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+
+    @objc private func mkWindowWillClose(_ note: Notification) {
+        guard isMkUIWindow(note.object as? NSWindow) else { return }
+        DispatchQueue.main.async {
+            if !AppState.shared.showIconOnDock {
+                NSApp.setActivationPolicy(.accessory)
+            }
+        }
     }
 
     // MARK: Engine

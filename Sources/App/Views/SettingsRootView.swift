@@ -58,7 +58,9 @@ struct SettingsRootView: View {
         .ignoresSafeArea(.container, edges: .top)
         // Accessory (menu-bar) apps don't activate properly when a window opens:
         // the window never becomes key, controls render gray and text fields
-        // can't take focus. Promote to .regular while this window is visible.
+        // can't take focus. Promote to .regular so it can grab focus; the app
+        // delegate drops back to .accessory once the window is key (unless the
+        // user wants a Dock icon), so no Dock icon lingers.
         .onAppear {
             NSApp.setActivationPolicy(.regular)
             NSApp.activate(ignoringOtherApps: true)
@@ -73,11 +75,6 @@ struct SettingsRootView: View {
                     window.maxSize = NSSize(width: 820, height: CGFloat.greatestFiniteMagnitude)
                     window.makeKeyAndOrderFront(nil)
                 }
-            }
-        }
-        .onDisappear {
-            if !state.showIconOnDock {
-                NSApp.setActivationPolicy(.accessory)
             }
         }
     }

@@ -40,9 +40,15 @@ struct TypingPage: View {
                 }
             }
 
-            Section("Phím chuyển chế độ") {
+            Section {
                 HotkeyEditor(status: $state.switchKeyStatus)
                 Toggle("Kêu beep khi chuyển chế độ", isOn: beepBinding)
+            } header: {
+                Text("Phím chuyển chế độ")
+            } footer: {
+                Text("Có thể dùng riêng tổ hợp phím chức năng, ví dụ ⌃⇧ (Control+Shift): bấm giữ rồi thả ra để ghi.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Chính tả") {

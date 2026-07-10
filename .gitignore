@@ -17,3 +17,6 @@ xcuserdata/
 # Swift Package Manager
 .build/
 .swiftpm/
+
+# Release artifacts (published to GitHub Releases)
+dist/

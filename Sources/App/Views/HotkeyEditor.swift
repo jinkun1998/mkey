@@ -11,6 +11,11 @@ import AppKit
 
 struct HotkeyEditor: View {
     @Binding var status: Int32
+    /// Whether a modifier-only shortcut (e.g. ⌃⇧ with no letter) is valid.
+    /// The language-switch & quick-convert hotkeys are matched by the engine's
+    /// event tap and support this; the clipboard hotkey uses a Carbon hotkey
+    /// that requires a real keycode, so it must pass `false`.
+    var allowsModifierOnly: Bool = true
     @State private var isRecording = false
     @State private var activeModifiers: Int32 = 0
 
@@ -100,7 +105,8 @@ struct HotkeyEditor: View {
                     HotkeyRecorderRepresentable(
                         isRecording: $isRecording,
                         status: $status,
-                        activeModifiers: $activeModifiers
+                        activeModifiers: $activeModifiers,
+                        allowsModifierOnly: allowsModifierOnly
                     )
                     .allowsHitTesting(false)
                 )
@@ -149,6 +155,7 @@ private struct HotkeyRecorderRepresentable: NSViewRepresentable {
     @Binding var isRecording: Bool
     @Binding var status: Int32
     @Binding var activeModifiers: Int32
+    let allowsModifierOnly: Bool
 
     func makeNSView(context: Context) -> NSView { NSView() }
 
@@ -166,6 +173,12 @@ private struct HotkeyRecorderRepresentable: NSViewRepresentable {
         var parent: HotkeyRecorderRepresentable
         var isRecording = false
         private var monitor: Any?
+        // Highest modifier set seen while recording (union across the sequence
+        // of flagsChanged events) and whether a shortcut has been committed —
+        // used to capture modifier-only shortcuts on release without racing the
+        // modifier+key path.
+        private var peakModifiers: Int32 = 0
+        private var committed = false
 
         init(parent: HotkeyRecorderRepresentable) {
             self.parent = parent
@@ -173,6 +186,8 @@ private struct HotkeyRecorderRepresentable: NSViewRepresentable {
 
         func startOrStopMonitor() {
             if isRecording, monitor == nil {
+                peakModifiers = 0
+                committed = false
                 Task { @MainActor in
                     MKBridge.setEngineSuspended(true)
                     ClipboardManager.shared.suspendHotKey()
@@ -194,8 +209,27 @@ private struct HotkeyRecorderRepresentable: NSViewRepresentable {
                         if flags.contains(.command) { mods |= 0x400 }
                         if flags.contains(.shift) { mods |= 0x800 }
 
-                        Task { @MainActor in
-                            self.parent.activeModifiers = mods
+                        if mods != 0 {
+                            self.peakModifiers |= mods
+                            Task { @MainActor in self.parent.activeModifiers = mods }
+                        } else {
+                            // All modifiers released with no regular key pressed:
+                            // capture a modifier-only shortcut (⌃⇧, ⌃⌥, …) when
+                            // allowed and at least two modifiers were held. This
+                            // matches how the engine detects a modifier-only
+                            // switch key (on the flags-released event).
+                            let peak = self.peakModifiers
+                            if self.parent.allowsModifierOnly, !self.committed,
+                               (peak & 0xF00).nonzeroBitCount >= 2 {
+                                self.committed = true
+                                Task { @MainActor in
+                                    let beep = self.parent.status & 0x8000
+                                    self.parent.status = beep | peak | Int32(bitPattern: 0xFE0000FE)
+                                    self.parent.isRecording = false
+                                }
+                            } else {
+                                Task { @MainActor in self.parent.activeModifiers = 0 }
+                            }
                         }
                         return event
                     } else if event.type == .keyDown {
@@ -203,6 +237,7 @@ private struct HotkeyRecorderRepresentable: NSViewRepresentable {
 
                         // Escape cancels
                         if code == 53 {
+                            self.committed = true
                             Task { @MainActor in
                                 self.parent.isRecording = false
                             }
@@ -211,6 +246,7 @@ private struct HotkeyRecorderRepresentable: NSViewRepresentable {
 
                         // Delete/Backspace clears
                         if code == 51 || code == 117 {
+                            self.committed = true
                             Task { @MainActor in
                                 let beep = self.parent.status & 0x8000
                                 self.parent.status = beep | Int32(bitPattern: 0xFE0000FE)
@@ -219,16 +255,19 @@ private struct HotkeyRecorderRepresentable: NSViewRepresentable {
                             return nil
                         }
 
-                        // Return/Enter confirms modifier-only shortcut
+                        // Return/Enter confirms a modifier-only shortcut (where
+                        // allowed); it is never recorded as a character key.
                         if code == 36 || code == 76 {
-                            if self.parent.activeModifiers != 0 {
+                            if self.parent.allowsModifierOnly, self.parent.activeModifiers != 0 {
+                                self.committed = true
+                                let mods = self.parent.activeModifiers
                                 Task { @MainActor in
                                     let beep = self.parent.status & 0x8000
-                                    self.parent.status = beep | self.parent.activeModifiers | Int32(bitPattern: 0xFE0000FE)
+                                    self.parent.status = beep | mods | Int32(bitPattern: 0xFE0000FE)
                                     self.parent.isRecording = false
                                 }
-                                return nil
                             }
+                            return nil
                         }
 
                         // Character keys
@@ -241,6 +280,7 @@ private struct HotkeyRecorderRepresentable: NSViewRepresentable {
                             return event
                         }
 
+                        self.committed = true
                         let finalModifiers = self.parent.activeModifiers
                         let finalKeyCode = UInt8(truncatingIfNeeded: code)
 
