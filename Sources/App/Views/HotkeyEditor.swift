@@ -166,13 +166,26 @@ private struct HotkeyRecorderRepresentable: NSViewRepresentable {
         var parent: HotkeyRecorderRepresentable
         var isRecording = false
         private var monitor: Any?
+        // Largest modifier set held during this recording, so releasing the
+        // keys one by one still commits the full combo (e.g. ⌃⇧).
+        private var peakModifiers: Int32 = 0
 
         init(parent: HotkeyRecorderRepresentable) {
             self.parent = parent
         }
 
+        private static func modifierBits(_ flags: NSEvent.ModifierFlags) -> Int32 {
+            var mods: Int32 = 0
+            if flags.contains(.control) { mods |= 0x100 }
+            if flags.contains(.option) { mods |= 0x200 }
+            if flags.contains(.command) { mods |= 0x400 }
+            if flags.contains(.shift) { mods |= 0x800 }
+            return mods
+        }
+
         func startOrStopMonitor() {
             if isRecording, monitor == nil {
+                peakModifiers = 0
                 Task { @MainActor in
                     MKBridge.setEngineSuspended(true)
                     ClipboardManager.shared.suspendHotKey()
@@ -182,17 +195,33 @@ private struct HotkeyRecorderRepresentable: NSViewRepresentable {
                     guard let self, self.isRecording else { return event }
 
                     if event.type == .leftMouseDown {
+                        self.peakModifiers = 0
+                        self.isRecording = false
                         Task { @MainActor in
                             self.parent.isRecording = false
                         }
                         return event
                     } else if event.type == .flagsChanged {
-                        let flags = event.modifierFlags
-                        var mods: Int32 = 0
-                        if flags.contains(.control) { mods |= 0x100 }
-                        if flags.contains(.option) { mods |= 0x200 }
-                        if flags.contains(.command) { mods |= 0x400 }
-                        if flags.contains(.shift) { mods |= 0x800 }
+                        let mods = Self.modifierBits(event.modifierFlags)
+
+                        if mods == 0 {
+                            // All modifiers released without a regular key:
+                            // commit as a modifier-only shortcut (e.g. ⌃⇧).
+                            let combo = self.peakModifiers
+                            if combo != 0 {
+                                self.peakModifiers = 0
+                                self.isRecording = false
+                                Task { @MainActor in
+                                    let beep = self.parent.status & 0x8000
+                                    self.parent.status = beep | combo | Int32(bitPattern: 0xFE0000FE)
+                                    self.parent.isRecording = false
+                                }
+                                return nil
+                            }
+                        } else if mods & ~self.peakModifiers != 0 {
+                            // a new modifier joined → this set is the current combo
+                            self.peakModifiers = mods
+                        }
 
                         Task { @MainActor in
                             self.parent.activeModifiers = mods
@@ -203,6 +232,8 @@ private struct HotkeyRecorderRepresentable: NSViewRepresentable {
 
                         // Escape cancels
                         if code == 53 {
+                            self.peakModifiers = 0
+                            self.isRecording = false
                             Task { @MainActor in
                                 self.parent.isRecording = false
                             }
@@ -211,6 +242,8 @@ private struct HotkeyRecorderRepresentable: NSViewRepresentable {
 
                         // Delete/Backspace clears
                         if code == 51 || code == 117 {
+                            self.peakModifiers = 0
+                            self.isRecording = false
                             Task { @MainActor in
                                 let beep = self.parent.status & 0x8000
                                 self.parent.status = beep | Int32(bitPattern: 0xFE0000FE)
@@ -221,10 +254,13 @@ private struct HotkeyRecorderRepresentable: NSViewRepresentable {
 
                         // Return/Enter confirms modifier-only shortcut
                         if code == 36 || code == 76 {
-                            if self.parent.activeModifiers != 0 {
+                            let mods = Self.modifierBits(event.modifierFlags)
+                            if mods != 0 {
+                                self.peakModifiers = 0
+                                self.isRecording = false
                                 Task { @MainActor in
                                     let beep = self.parent.status & 0x8000
-                                    self.parent.status = beep | self.parent.activeModifiers | Int32(bitPattern: 0xFE0000FE)
+                                    self.parent.status = beep | mods | Int32(bitPattern: 0xFE0000FE)
                                     self.parent.isRecording = false
                                 }
                                 return nil
@@ -241,9 +277,11 @@ private struct HotkeyRecorderRepresentable: NSViewRepresentable {
                             return event
                         }
 
-                        let finalModifiers = self.parent.activeModifiers
+                        let finalModifiers = Self.modifierBits(event.modifierFlags)
                         let finalKeyCode = UInt8(truncatingIfNeeded: code)
 
+                        self.peakModifiers = 0
+                        self.isRecording = false
                         Task { @MainActor in
                             let beep = self.parent.status & 0x8000
                             self.parent.status = beep | finalModifiers | Int32(finalKeyCode) | (Int32(displayChar) << 24)
