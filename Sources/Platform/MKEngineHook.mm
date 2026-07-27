@@ -36,6 +36,14 @@ extern "C" {
                                @"com.sublimetext.2",
                              ];
 
+    //design apps whose text engine draws the U+202F/U+200C autocomplete
+    //workaround as a missing-glyph box (▯ with an X) and sometimes swallows
+    //the backspace meant to remove it; they have no inline completion to
+    //defeat anyway, so the empty-character trick is pure harm there.
+    //Matched by bundle-id prefix to cover the whole family.
+    NSArray* _autocompleteFixSkipApp = @[@"com.adobe.",      //Illustrator, Photoshop, InDesign…
+                                         @"com.seriflabs."]; //Affinity Designer/Photo/Publisher
+
     //app which error with unicode Compound
     NSArray* _unicodeCompoundApp = @[@"com.apple.",
                                      @"com.google.Chrome", @"com.brave.Browser",
@@ -70,6 +78,7 @@ extern "C" {
     bool _frontMostIsNiceSpace = false;
     bool _frontMostIsUnicodeCompound = false;
     bool _frontMostNeedsChromiumFix = false;
+    bool _frontMostSkipsAutocompleteFix = false;
 
     // Performance Caches
     CGKeyCode _compatKeyCodeCache[128];
@@ -495,6 +504,13 @@ extern "C" {
         _frontMostIsNiceSpace = [_niceSpaceApp containsObject:_frontMostApp];
         _frontMostIsUnicodeCompound = containUnicodeCompoundApp(_frontMostApp);
         _frontMostNeedsChromiumFix = [_unicodeCompoundApp containsObject:_frontMostApp];
+        _frontMostSkipsAutocompleteFix = false;
+        for (NSString* prefix in _autocompleteFixSkipApp) {
+            if ([_frontMostApp hasPrefix:prefix]) {
+                _frontMostSkipsAutocompleteFix = true;
+                break;
+            }
+        }
     }
 
     void queryFrontMostApp() {
@@ -844,7 +860,7 @@ extern "C" {
         }
 
         //fix autocomplete
-        if (vFixRecommendBrowser) {
+        if (vFixRecommendBrowser && !_frontMostSkipsAutocompleteFix) {
             SendEmptyCharacter();
             pData->backspaceCount++;
         }
@@ -1123,7 +1139,7 @@ extern "C" {
                 }
 
                 //fix autocomplete
-                if (vFixRecommendBrowser && pData->extCode != 4) {
+                if (vFixRecommendBrowser && !_frontMostSkipsAutocompleteFix && pData->extCode != 4) {
                     if (vFixChromiumBrowser && _frontMostNeedsChromiumFix) {
                         if (pData->backspaceCount > 0) {
                             SendShiftAndLeftArrow();

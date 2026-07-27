@@ -72,6 +72,9 @@ struct TypingPage: View {
 
             Section("Tương thích") {
                 Toggle("Sửa lỗi gợi ý của trình duyệt và Excel", isOn: $state.fixRecommendBrowser)
+                Text("Tự bỏ qua trong Adobe/Affinity để không hiện ký tự lỗi (ô vuông ✕).")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
                 Toggle("Sửa lỗi nhân Chromium (thử nghiệm)", isOn: $state.fixChromiumBrowser)
                     .disabled(!state.fixRecommendBrowser)
                 Toggle("Tạm tắt mkey bằng phím ⌘", isOn: $state.tempOffByCommand)
