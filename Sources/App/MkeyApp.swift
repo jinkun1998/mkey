@@ -49,7 +49,7 @@ struct MenuBarLabel: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Image(nsImage: StatusIcon.image(vietnamese: state.isVietnamese, gray: state.grayIcon))
+        Image(nsImage: StatusIcon.image(vietnamese: state.isVietnamese, gray: state.grayIcon, excluded: state.currentAppExcluded))
             .onReceive(NotificationCenter.default.publisher(for: .mkOpenSettingsWindow)) { _ in
                 openWindow(id: "settings")
                 NSApp.activate(ignoringOtherApps: true)
@@ -79,6 +79,16 @@ struct MenuContent: View {
         } else {
             Toggle("Tiếng Việt", isOn: $state.isVietnamese)
                 .dynamicShortcut(state.switchKeyStatus)
+                .disabled(state.currentAppExcluded)
+
+            if let bundleID = state.frontAppBundleID {
+                Toggle(isOn: Binding(
+                    get: { state.currentAppExcluded },
+                    set: { _ in state.toggleExcluded(bundleID: bundleID) }
+                )) {
+                    Text("Tắt mkey cho \(excludeTargetName)")
+                }
+            }
 
             Divider()
 
@@ -125,6 +135,15 @@ struct MenuContent: View {
         }
     }
 
+    /// Short, friendly name of the app the exclude toggle acts on.
+    private var excludeTargetName: String {
+        if let name = state.frontAppName, !name.isEmpty { return name }
+        if let bid = state.frontAppBundleID {
+            return bid.components(separatedBy: ".").last ?? bid
+        }
+        return "ứng dụng này"
+    }
+
     private func openWelcomeWindow() {
         openWindow(id: "welcome")
         NSApp.activate(ignoringOtherApps: true)
@@ -148,6 +167,13 @@ final class MkeyAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let state = AppState.shared
         NSApp.setActivationPolicy(state.showIconOnDock ? .regular : .accessory)
+
+        // Seed the frontmost-app tracking so the menu-bar exclude item works
+        // before the first app switch.
+        if let app = NSWorkspace.shared.frontmostApplication,
+           app.bundleIdentifier != Bundle.main.bundleIdentifier {
+            state.updateFrontApp(bundleID: app.bundleIdentifier, name: app.localizedName)
+        }
 
         registerWorkspaceNotifications()
         observeQuickConvert()
@@ -308,7 +334,16 @@ final class MkeyAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func activeAppChanged(_ note: Notification) {
-        if vUseSmartSwitchKey != 0 && MKBridge.isEventTapRunning() {
+        let tapRunning = MKBridge.isEventTapRunning()
+        // Track the frontmost non-MKey app so the menu-bar "exclude this app"
+        // item and the icon's excluded state stay current. Refresh the engine's
+        // exclude flag too (independent of smart switch).
+        if let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+           app.bundleIdentifier != Bundle.main.bundleIdentifier {
+            AppState.shared.updateFrontApp(bundleID: app.bundleIdentifier, name: app.localizedName)
+            if tapRunning { MKBridge.frontMostAppChanged() }
+        }
+        if vUseSmartSwitchKey != 0 && tapRunning {
             MKBridge.activeAppChanged()
         }
     }

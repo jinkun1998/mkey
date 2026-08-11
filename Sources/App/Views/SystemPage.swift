@@ -60,6 +60,20 @@ struct SystemPage: View {
                 Toggle("Tự nhớ bảng mã theo từng ứng dụng", isOn: $state.rememberCode)
             }
 
+            Section {
+                AppBundleListEditor(
+                    apps: $state.excludedApps,
+                    emptyHint: "Chưa có ứng dụng nào. Kéo thả ứng dụng vào đây, nhấn +, hoặc dùng menu \u{201C}Tắt mkey cho…\u{201D} trên thanh menu.",
+                    panelMessage: "Chọn ứng dụng để loại trừ (mkey sẽ không xử lý phím trong ứng dụng đó)"
+                )
+            } header: {
+                Text("Ứng dụng loại trừ")
+            } footer: {
+                Text("Trong các ứng dụng này, mkey bỏ qua hoàn toàn — gõ như khi chưa cài (phù hợp terminal, IDE, game…). Khác với \u{201C}nhớ chế độ theo app\u{201D}: loại trừ là tắt cứng, luôn ưu tiên.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Tương thích nâng cao") {
                 Toggle("Gửi phím từng bước (chậm nhưng tương thích cao)", isOn: $state.sendKeyStepByStep)
                 Toggle("Tương thích bố cục bàn phím khác QWERTY", isOn: $state.performLayoutCompat)

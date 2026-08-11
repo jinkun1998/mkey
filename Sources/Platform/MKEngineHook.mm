@@ -66,6 +66,7 @@ extern "C" {
     AXUIElementRef _axSystemWide = NULL;
     AXUIElementRef _axCachedFocused = NULL;
     NSArray* _axIncludedApps = @[];
+    NSArray* _excludedApps = @[];   //apps where MKey is fully bypassed
     bool _axCachedIsSlow = false;
     bool _axCachedIsIncluded = false;
     CFAbsoluteTime _axCacheTime = 0;
@@ -79,6 +80,7 @@ extern "C" {
     bool _frontMostIsUnicodeCompound = false;
     bool _frontMostNeedsChromiumFix = false;
     bool _frontMostSkipsAutocompleteFix = false;
+    bool _frontMostIsExcluded = false;   //user marked this app "don't touch"
 
     // Performance Caches
     CGKeyCode _compatKeyCodeCache[128];
@@ -153,6 +155,26 @@ extern "C" {
             }
         }
         return false;
+    }
+
+    bool AXAppIsExcluded(NSString* bid) {
+        if (bid == nil)
+            return false;
+        for (NSString* excluded in _excludedApps) {
+            if ([bid isEqualToString:excluded] || [bid hasPrefix:excluded]) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    //Reload the user's exclude list and re-evaluate the current app. Called at
+    //init and (via MKBridge) right after the UI edits the list, so a menu-bar
+    //toggle takes effect on the very next keystroke without an app switch.
+    void MKReloadExcludedApps() {
+        NSArray* apps = [[NSUserDefaults standardUserDefaults] stringArrayForKey:@"axExcludeApps"];
+        _excludedApps = apps != nil ? [apps copy] : @[];
+        _frontMostIsExcluded = AXAppIsExcluded(_frontMostApp);
     }
 
     //look up the AX-focused element and whether it belongs to a slow-path app;
@@ -429,6 +451,7 @@ extern "C" {
         LOAD_DATA(vFixSpotlight, vFixSpotlight);
         LOAD_DATA(vUseAXReplacement, vUseAXReplacement);
         AXReloadIncludedApps();
+        MKReloadExcludedApps();
 
         LOAD_DATA(vSwitchKeyStatus, SwitchKeyStatus);
         if (vSwitchKeyStatus == 0)
@@ -511,6 +534,7 @@ extern "C" {
                 break;
             }
         }
+        _frontMostIsExcluded = AXAppIsExcluded(_frontMostApp);
     }
 
     void queryFrontMostApp() {
@@ -535,6 +559,13 @@ extern "C" {
             _frontMostPid = pid;
             updateFrontMostAppFlags();
         }
+    }
+
+    //Refresh which app is frontmost (and thus the exclude flag) on app
+    //activation, independent of the smart-switch feature. Cheap: one
+    //frontmostApplication read + flag recompute, no engine language change.
+    void MKFrontMostAppChanged() {
+        queryFrontMostApp();
     }
 
     NSString* ConvertUtil(NSString* str) {
@@ -985,6 +1016,16 @@ extern "C" {
             if (OTHER_CONTROL_KEY) {
                 AXInvalidateFocusCache();
             }
+        }
+
+        //Hard exclude: the user marked the front app as "don't touch". Pass every
+        //event through untouched — no Vietnamese processing, no switch hotkey — so
+        //the app behaves exactly as if MKey weren't running. _frontMostIsExcluded
+        //is refreshed on each keydown (updateFrontMostAppForEvent) and on app
+        //activation (frontMostAppChanged), so this is fresh from the first key.
+        if (_frontMostIsExcluded) {
+            _lastFlag = _flag;
+            return event;
         }
         if (type == kCGEventKeyDown && vPerformLayoutCompat) {
             CGKeyCode originalKeyCode = _keycode;
